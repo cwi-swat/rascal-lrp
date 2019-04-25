@@ -1,0 +1,9 @@
+
+machine esc {
+  state tick;
+  state tock;
+  on time 500 tick -> tock
+  on time 500 tock -> tick
+} 
+
+spawn esc tick

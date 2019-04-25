@@ -1,0 +1,56 @@
+
+var lightlim := 128;
+var maxlook := 100;
+var forward := 0.2;
+var search := 0.2;
+var back := -0.2;
+var turn := 1;
+
+machine follower {
+  state moving
+    running { robot.move(msg => { msg.linear().x = forward; }); }
+
+  on outofline moving -> looking
+  on intheline looking -> moving
+  event outofline robot.light.data > lightlim + 10;
+  event outofline robot.light.data < lightlim - 10;
+
+  state looking { 
+    machine lookalgo {
+      var time := maxlook;
+      state lookleft running { robot.move(msg => { msg.angular.z = search; }); }
+      state returnleft running { robot.move(msg => { msg.angular.z = search * -1; }); }
+      state lookright running  { robot.move(msg => { msg.angular.z = search * -1; }); }
+      state returnright {
+        running { robot.move(msg => msg.angular.z(search)); }
+        on exit { time = time * 2; }
+      }
+      on time time lookleft -> returnleft 
+      on time time returnleft -> lookright
+      on time time lookright -> returnright
+      on time time returnright -> lookleft
+    }
+    on entry spawn lookalgo lookleft
+  }
+  
+  var nobump := true;
+  event bumping robot.bumper.data == 1 && nobump;
+  event ending robot.bumper.data == 1 && !nobump;
+  on bumping *-> bumpback
+  on ending *-> end
+  
+  state bumpback {
+    on entry { nobump = false; }
+    running { robot.move(msg => { msg.linear.x = back; }); }
+  }
+  
+  state bumpturn 
+    running { robot.move(msg => { msg.angular.z = search; }); }
+    
+  on time 1000 bumpback -> bumpturn
+  on time 3000 bumpturn -> looking
+  
+  state end;
+}
+
+spawn follower looking

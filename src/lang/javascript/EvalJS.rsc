@@ -11,3 +11,6 @@ alias JSResult = tuple[map[str, value] bindings, value val];
 
 @javaClass{lang.javascript.EvalJS}
 java JSResult evalJS(str command, map[str, value] bindings);
+
+@javaClass{lang.javascript.EvalJS}
+java void sleep(int millis);

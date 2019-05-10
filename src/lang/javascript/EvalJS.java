@@ -113,6 +113,14 @@ public class EvalJS {
 		}
 	}
 	
+	public void sleep(IInteger millis) {
+		try {
+			Thread.sleep(millis.longValue());
+		} catch (InterruptedException e) {
+			return;
+		}
+	}
+	
 	
 	
 }

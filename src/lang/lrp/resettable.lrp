@@ -1,0 +1,24 @@
+// a resettable timer with 10 sec intervals
+var minute := 0;
+
+machine timer {
+  state zero;
+  state ten;
+  state twenty;
+  state thirty;
+  state fourty;
+  state fifty on exit { minute++; }
+  on time 10000 zero -> ten
+  on time 10000 ten -> twenty
+  on time 10000 twenty -> thirty
+  on time 10000 thirty -> fourty
+  on time 10000 fourty -> fifty
+  on time 10000 fifty -> zero
+  var doreset := 0;
+  state init on entry { minute = 0; doreset = 0; }
+  on resetting *-> init
+  on init -> zero
+  event resetting doreset == 1;
+}
+
+spawn timer zero

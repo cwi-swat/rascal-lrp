@@ -51,8 +51,9 @@ void run(start[LRP] lrp, int delay = 1000) {
 
 RT initialize(start[LRP] lrp) {
   RT rt = <(), initVars(lrp)>;
-  for (Machine m <- lrp.top.machines, (Code)`spawn <Id x> <Id s>` <- lrp.top.spawns, x == m.name) {
-    <rt.threads["<x>"], rt.heap> = makeActive(m, "<s>", rt.heap);
+  for ((Code)`spawn <Id x> <Id s>` <- lrp.top.spawns) {
+    str m = "<x>";
+    <rt.threads[m], rt.heap> = makeActive(lookupMachine(lrp, m), "<s>", rt.heap);
   }
   return rt;    
 }
@@ -66,6 +67,12 @@ RT loop(start[LRP] lrp, RT rt) {
 
 
 // Per thread functions
+
+tuple[Thread, Heap] makeActive(Machine m, str state, Heap heap) {
+  Timers timers = initTimers(m);
+  <nested, heap> = onEntry(lookupState(m, state), heap);
+  return <[<state, timers>] + nested, heap>;
+}
 
 tuple[Thread, Heap] fire(Machine m, Thread me, Heap heap) {
   Decl current = lookupState(m, me[0].state);
@@ -81,29 +88,32 @@ bool evalGuard(Decl trans, Machine m, Thread me, Heap heap) {
   if (trans is epsilon) {
     return true;
   }
+  
   if ((Decl)`on time <Expression t> <Id from> -\> <Id to>` := trans, int delta := evalJS("<t>", heap).val) {
     datetime started = lookupTimer(me[0].timers, from, to);
-    return incrementMilliseconds(started, delta) < now();
+    return now() > incrementMilliseconds(started, delta);
   }
+  
+  // Covers both wildcard and ordinary transitions
   if ((Decl)`event <Id e> <Expression cond>;` <- m.decls, e == trans.event) {
     return (bool b := evalJS("<cond>", heap).val) && b;
   }
+  
   throw "invalid transition <trans>";
 }
 
-tuple[Thread, Heap] makeActive(Machine m, str state, Heap heap) {
-  Timers timers = initTimers(m);
-  <nested, heap> = onEntry(lookupState(m, state), heap);
-  return <[<state, timers>] + nested, heap>;
-}
 
 tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
-  top-down-break visit (state) {
-    case (Contents)`on entry {<Statement* js>}`:
-      return <[], evalJS("{<js>}", heap).bindings>;
-    case (Contents)`on entry spawn <Id m> <Id s>`:
-      return makeActive(lookupMachine(parent, m), "<s>", heap);
+  list[Contents] cs = contentsOf(state);
+
+  if ((Contents)`on entry {<Statement* js>}` <- cs) {
+    return <[], evalJS("{<js>}", heap).bindings>;
   }
+  
+  if ((Contents)`on entry spawn <Id m> <Id s>` <- cs) {
+    return makeActive(lookupMachine(parent, m), "<s>", heap);
+  }
+
   return <[], heap>;
 }
 
@@ -111,12 +121,12 @@ tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
 tuple[Thread, Heap] running(Decl state, Thread me, Heap heap) {
   assert me[0].state == "<state.name>";
   
-  top-down-break visit (state) {
-    case (Contents)`running {<Statement* js>}`: heap = evalJS("{<js>}", heap).binding;
+  for ((Contents)`running {<Statement* js>}` <- contentsOf(state)) {
+    heap = evalJS("{<js>}", heap).bindings;
   } 
   
   // NB: this really depends on uniqueness of state names across machines
-  if (size(me) > 1, /Machine m := state, Decl d <- m.decls, d is state, "<d.name>" == me[1].state) {
+  if ((Contents)`<Machine m>` <- contentsOf(state), hasChild(m, me)) {
     <nested, heap> = fire(m, me[1..], heap);
     return <[me[0], *nested], heap>;
   } 
@@ -124,20 +134,24 @@ tuple[Thread, Heap] running(Decl state, Thread me, Heap heap) {
   return <me, heap>;
 }
 
+
 Heap onExit(Decl state, Thread me, Heap heap) {
-  // NB: this really depends on uniqueness of state names across machines
-  if (size(me) > 1, /Machine m := state, Decl d <- m.decls, d is state, "<d.name>" == me[1].state) {
-    heap = onExit(d, m[1..], heap);
+  if ((Contents)`<Machine m>` <- contentsOf(state), hasChild(m, me)) {
+    heap = onExit(lookupState(m, me[1].state), m[1..], heap);
   } 
   
-  top-down-break visit (state) {
-    case (Contents)`on exit {<Statement* js>}`: heap = evalJS("{<js>}", heap).bindings;
+  for ((Contents)`on exit {<Statement* js>}` <- contentsOf(state)) {
+    heap = evalJS("{<js>}", heap).bindings;
   }
   
   return heap;
 }
 
 // Utils
+
+list[Contents] contentsOf((State)`state <Id _> {<Contents* cs>}`) = [ c | Contents c <- cs ];
+
+default list[Contents] contentsOf(State s) = [s.contents];
 
 Heap initVars(start[LRP] lrp) 
   = ( () | it +  ("<x>": evalJS("<e>", it).val) | /(Decl)`var <Id x> := <Expression e>;` := lrp ); 
@@ -154,8 +168,12 @@ list[Decl] outgoing(Machine m, Decl s)
 Machine lookupMachine(start[LRP] lrp, str tid) = m
   when Machine m <- lrp.top.machines, "<m.name>" == tid;
 
+bool hasState(Machine m, str name) 
+  = Decl s <- m.decls && s is state && "<s.name>" == name;
+
 Decl lookupState(Machine m, str name) = s
   when Decl s <- m.decls, s is state, "<s.name>" == name;
 
+bool hasChild(Machine m, Thread me) = size(me) > 1 && hasState(m, m[1].state);
 
 

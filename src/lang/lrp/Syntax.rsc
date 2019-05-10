@@ -4,8 +4,8 @@ extend lang::javascript::saner::Syntax;
 
 start syntax LRP 
   = Decl!machine!state!event!trans!wildcard!epsilon!timed* globals 
-    Machine machine
-    Code!js spawn
+    Machine+ machines
+    Code!js+ spawns
     ;
 syntax Machine = @Foldable machine: "machine" Id name "{" Decl* decls "}" ;
 

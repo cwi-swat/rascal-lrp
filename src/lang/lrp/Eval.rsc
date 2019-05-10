@@ -121,7 +121,7 @@ RT running((Contents)`running {<Statement* js>}`, Decl parent, RT rt)
   = rt[env = evalJS("{<js>}", rt.env).bindings];
 
 RT running((Contents)`<Machine m>`, Decl parent, RT rt)
-  = fire(m, parent, rt);
+  = fire(m, parent, rt); // wrong: need to recursively call running for nested current state
 
 default RT running(Contents _, Decl _, RT rt) = rt;
 

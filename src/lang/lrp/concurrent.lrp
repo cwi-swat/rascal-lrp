@@ -1,0 +1,51 @@
+// New program created by UlyanaTikhonova on 25 April 2019
+// A line follower for a differential drive robot
+// Uses the Lego color sensor,
+// position is front and center, and pointed to the line (down)
+var sensor := 0;
+var mright := 0;
+var mleft := 0;
+var speed := 4;
+var mode := true;
+
+machine follower {
+  state init onentry { mode = true; }
+  state moving {
+    onentry { mright = speed * 2; mleft = speed * 2.0; } 
+    onexit { mright = 0; mleft = 0; }
+  }
+  
+  state looking {
+    machine lookalgo {
+      var looktime := 1000;
+      state lookright onentry { mright = -speed; mleft = speed; }
+      state lookleft onentry { mright = speed; mleft = -speed; }
+      state centerfromright onentry { mright = speed; mleft = -speed; }
+      state centerfromleft { 
+        onentry { mright = -speed; mleft = speed; }
+        onexit { looktime *= 2; }
+      }
+      on time looktime lookleft -> returnleft 
+      on time looktime returnleft -> lookright
+      on time looktime lookright -> returnright
+      on time looktime returnright -> lookleft
+    }
+    onentry spawn lookalgo lookright
+  }
+  on init -> moving
+  on out moving -> looking
+  event out sensor != 1;
+  event inn sensor === 1;
+  on inn looking -> moving
+  on stop *-> init
+  event stop !mode;
+}
+
+machine simulator {
+  state online onentry { sensor = 1; }
+  state offline onentry { sensor = 0; }
+  on time 2000 offline -> online
+  on time 500 online -> offline
+}
+spawn follower init
+spawn simulator offline

@@ -40,6 +40,10 @@ void run(loc l, int delay = 1000) {
 void run(start[LRP] lrp, int delay = 1000) {
   rt = initialize(lrp);
   while (true) {
+    println("HEAP: <rt.heap>");
+    for (str m <- rt.threads) {
+      println("THREAD <m>: <rt.threads[m]>"); 
+    }
     rt = loop(lrp, rt);
     sleep(delay);
   }
@@ -76,7 +80,7 @@ tuple[Thread, Heap] makeActive(Machine m, str state, Heap heap) {
 
 tuple[Thread, Heap] fire(Machine m, Thread me, Heap heap) {
   Decl current = lookupState(m, me[0].state);
-  if (Decl t <- outgoing(m, current), evalGuard(t, m, heap)) {
+  if (Decl t <- outgoing(m, current), evalGuard(t, m, me, heap)) {
     heap = onExit(current, me, heap);
     return makeActive(m, "<t.to>", heap);
   }
@@ -111,7 +115,7 @@ tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
   }
   
   if ((Contents)`on entry spawn <Id m> <Id s>` <- cs) {
-    return makeActive(lookupMachine(parent, m), "<s>", heap);
+    return makeActive(lookupMachine(state, "<m>"), "<s>", heap);
   }
 
   return <[], heap>;
@@ -119,13 +123,10 @@ tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
 
 
 tuple[Thread, Heap] running(Decl state, Thread me, Heap heap) {
-  assert me[0].state == "<state.name>";
-  
   for ((Contents)`running {<Statement* js>}` <- contentsOf(state)) {
     heap = evalJS("{<js>}", heap).bindings;
   } 
   
-  // NB: this really depends on uniqueness of state names across machines
   if ((Contents)`<Machine m>` <- contentsOf(state), hasChild(m, me)) {
     <nested, heap> = fire(m, me[1..], heap);
     return <[me[0], *nested], heap>;
@@ -137,7 +138,7 @@ tuple[Thread, Heap] running(Decl state, Thread me, Heap heap) {
 
 Heap onExit(Decl state, Thread me, Heap heap) {
   if ((Contents)`<Machine m>` <- contentsOf(state), hasChild(m, me)) {
-    heap = onExit(lookupState(m, me[1].state), m[1..], heap);
+    heap = onExit(lookupState(m, me[1].state), me[1..], heap);
   } 
   
   for ((Contents)`on exit {<Statement* js>}` <- contentsOf(state)) {
@@ -149,9 +150,13 @@ Heap onExit(Decl state, Thread me, Heap heap) {
 
 // Utils
 
-list[Contents] contentsOf((State)`state <Id _> {<Contents* cs>}`) = [ c | Contents c <- cs ];
+list[Decl] outgoing(Machine m, Decl s)
+  = [ d | Decl d <- m.decls, (d has from && d.from == s.name) || d is wildcard ];
 
-default list[Contents] contentsOf(State s) = [s.contents];
+list[Contents] contentsOf((Decl)`state <Id _> {<Contents* cs>}`) 
+  = [ c | Contents c <- cs ];
+
+default list[Contents] contentsOf(Decl s) = [s.contents];
 
 Heap initVars(start[LRP] lrp) 
   = ( () | it +  ("<x>": evalJS("<e>", it).val) | /(Decl)`var <Id x> := <Expression e>;` := lrp ); 
@@ -162,18 +167,19 @@ Timers initTimers(Machine m)
 datetime lookupTimer(Timers ts, Id from, Id to) = dt
   when <str f, str t, datetime dt> <- ts, "<from>" ==f, "<to>" == t;
 
-list[Decl] outgoing(Machine m, Decl s)
-  = [ d | Decl d <- m.decls, (d has from && d.from == s.name) || d is wildcard ];
-
 Machine lookupMachine(start[LRP] lrp, str tid) = m
   when Machine m <- lrp.top.machines, "<m.name>" == tid;
 
-bool hasState(Machine m, str name) 
-  = Decl s <- m.decls && s is state && "<s.name>" == name;
+Machine lookupMachine(Decl state, str tid) = m
+  when (Contents)`<Machine m>` <- contentsOf(state), "<m.name>" == tid;
+
+bool hasState(Machine m, str name) = Decl s <- m.decls && isNamedState(s, name);
 
 Decl lookupState(Machine m, str name) = s
-  when Decl s <- m.decls, s is state, "<s.name>" == name;
+  when Decl s <- m.decls, isNamedState(s, name);
 
-bool hasChild(Machine m, Thread me) = size(me) > 1 && hasState(m, m[1].state);
+bool isNamedState(Decl d, str name) = d is state && "<d.name>" == name;
+
+bool hasChild(Machine m, Thread me) = size(me) > 1 && hasState(m, me[1].state);
 
 

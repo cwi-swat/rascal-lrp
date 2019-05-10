@@ -20,8 +20,8 @@ machine follower {
       var looktime := 1000;
       state lookright onentry { mright = -speed; mleft = speed; }
       state lookleft onentry { mright = speed; mleft = -speed; }
-      state centerfromright onentry { mright = speed; mleft = -speed; }
-      state centerfromleft { 
+      state returnright onentry { mright = speed; mleft = -speed; }
+      state returnleft { 
         onentry { mright = -speed; mleft = speed; }
         onexit { looktime *= 2; }
       }

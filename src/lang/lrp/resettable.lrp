@@ -8,12 +8,12 @@ machine timer {
   state thirty;
   state fourty;
   state fifty on exit { minute++; }
-  on time 10000 zero -> ten
-  on time 10000 ten -> twenty
-  on time 10000 twenty -> thirty
-  on time 10000 thirty -> fourty
-  on time 10000 fourty -> fifty
-  on time 10000 fifty -> zero
+  on time 1000 zero -> ten
+  on time 1000 ten -> twenty
+  on time 1000 twenty -> thirty
+  on time 1000 thirty -> fourty
+  on time 1000 fourty -> fifty
+  on time 1000 fifty -> zero
   var doreset := 0;
   state init on entry { minute = 0; doreset = 0; }
   on resetting *-> init
@@ -21,4 +21,6 @@ machine timer {
   event resetting doreset == 1;
 }
 
+
 spawn timer zero
+

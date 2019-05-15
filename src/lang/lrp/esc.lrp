@@ -1,6 +1,7 @@
 
+var ticks := 0;
 machine esc {
-  state tick;
+  state tick on entry { ticks++; }
   state tock;
   on time 500 tick -> tock
   on time 500 tock -> tick

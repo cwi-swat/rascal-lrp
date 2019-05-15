@@ -7,15 +7,11 @@ import DateTime;
 import String;
 import ParseTree;
 import IO;
-
+import List;
 
 /*
 
-- variables only initialized at the very beginning
-- active machine/state list should be a tree (or array of stacks when concurrency only at toplevel)
-  (assume state names are unique)
-- reset timers indeed before onEntry
-- make identification of machine/state stuff location independent
+- Logical time
 
 */
 
@@ -23,7 +19,8 @@ import IO;
 // can be represented as a single map 
 alias Heap = map[str var, value val];
 
-alias Timers = rel[str from, str to, datetime now];
+//alias Timers = rel[str from, str to, datetime now];
+alias Timers = rel[str from, str to, int now];
 
 alias Active = tuple[str state, Timers timers];
 
@@ -33,19 +30,33 @@ alias RT = tuple[map[str machine, Thread thread] threads, Heap heap];
 
 // Helper functions
 
-void run(loc l, int delay = 1000) {
-  run(parse(#start[LRP], l), delay = delay);
+void run(loc l, int step = 1000, int delay = 1000) {
+  run(parse(#start[LRP], l), step = step, delay = delay);
 }
 
-void run(start[LRP] lrp, int delay = 1000) {
-  rt = initialize(lrp);
-  while (true) {
-    println("HEAP: <rt.heap>");
-    for (str m <- rt.threads) {
-      println("THREAD <m>: <rt.threads[m]>"); 
+void printRT(RT rt, int time) {
+  println("RUNTIME @ <time>");
+  println("  HEAP:");
+  for (str x <- rt.heap) {
+    println("    <x>: <rt.heap[x]>"); 
+  }
+  println(" THREADS: ");
+  for (str tid <- rt.threads) {
+    println("    <tid>: <intercalate("/", [ s | <str s, _> <- rt.threads[tid] ])>");
+    for (<str s, Timers ts> <- rt.threads[tid]) {
+      println("      <s>: <intercalate(", ", [ "<f>-\><t> @ <d>" | <str f, str t, int d> <- ts ])>");
     }
-    rt = loop(lrp, rt);
+  }
+}
+
+void run(start[LRP] lrp, int step = 1000, int delay = 1000) {
+  int time = 0;
+  rt = initialize(lrp, time);
+  while (true) {
+    printRT(rt, time);
+    rt = loop(lrp, rt, time);
     sleep(delay);
+    time += step;
   }
 }
 
@@ -53,18 +64,18 @@ void run(start[LRP] lrp, int delay = 1000) {
 
 // System-wide functions
 
-RT initialize(start[LRP] lrp) {
+RT initialize(start[LRP] lrp, int time) {
   RT rt = <(), initVars(lrp)>;
   for ((Code)`spawn <Id x> <Id s>` <- lrp.top.spawns) {
     str m = "<x>";
-    <rt.threads[m], rt.heap> = makeActive(lookupMachine(lrp, m), "<s>", rt.heap);
+    <rt.threads[m], rt.heap> = makeActive(lookupMachine(lrp, m), "<s>", rt.heap, time);
   }
   return rt;    
 }
 
-RT loop(start[LRP] lrp, RT rt) {
+RT loop(start[LRP] lrp, RT rt, int time) {
   for (str tid <- rt.threads) {
-    <rt.threads[tid], rt.heap> = fire(lookupMachine(lrp, tid), rt.threads[tid], rt.heap);
+    <rt.threads[tid], rt.heap> = fire(lookupMachine(lrp, tid), rt.threads[tid], rt.heap, time);
   }
   return rt;
 } 
@@ -72,30 +83,31 @@ RT loop(start[LRP] lrp, RT rt) {
 
 // Per thread functions
 
-tuple[Thread, Heap] makeActive(Machine m, str state, Heap heap) {
-  Timers timers = initTimers(m);
-  <nested, heap> = onEntry(lookupState(m, state), heap);
+tuple[Thread, Heap] makeActive(Machine m, str state, Heap heap, int time) {
+  Timers timers = initTimers(m, time);
+  <nested, heap> = onEntry(lookupState(m, state), heap, time);
   return <[<state, timers>] + nested, heap>;
 }
 
-tuple[Thread, Heap] fire(Machine m, Thread me, Heap heap) {
+tuple[Thread, Heap] fire(Machine m, Thread me, Heap heap, int time) {
   Decl current = lookupState(m, me[0].state);
-  if (Decl t <- outgoing(m, current), evalGuard(t, m, me, heap)) {
+  if (Decl t <- outgoing(m, current), evalGuard(t, m, me, heap, time)) {
     heap = onExit(current, me, heap);
-    return makeActive(m, "<t.to>", heap);
+    return makeActive(m, "<t.to>", heap, time);
   }
-  return running(current, me, heap);
+  return running(current, me, heap, time);
 }
 
 
-bool evalGuard(Decl trans, Machine m, Thread me, Heap heap) {
+bool evalGuard(Decl trans, Machine m, Thread me, Heap heap, int time) {
   if (trans is epsilon) {
     return true;
   }
   
-  if ((Decl)`on time <Expression t> <Id from> -\> <Id to>` := trans, int delta := evalJS("<t>", heap).val) {
-    datetime started = lookupTimer(me[0].timers, from, to);
-    return now() > incrementMilliseconds(started, delta);
+  if ((Decl)`on time <Expression t> <Id from> -\> <Id to>` := trans, num delta := evalJS("<t>", heap).val) {
+    int started = lookupTimer(me[0].timers, from, to);
+    //return now() > incrementMilliseconds(started, delta);
+    return time > started + delta;
   }
   
   // Covers both wildcard and ordinary transitions
@@ -107,7 +119,7 @@ bool evalGuard(Decl trans, Machine m, Thread me, Heap heap) {
 }
 
 
-tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
+tuple[Thread, Heap] onEntry(Decl state, Heap heap, int time) {
   list[Contents] cs = contentsOf(state);
 
   if ((Contents)`on entry {<Statement* js>}` <- cs) {
@@ -115,20 +127,20 @@ tuple[Thread, Heap] onEntry(Decl state, Heap heap) {
   }
   
   if ((Contents)`on entry spawn <Id m> <Id s>` <- cs) {
-    return makeActive(lookupMachine(state, "<m>"), "<s>", heap);
+    return makeActive(lookupMachine(state, "<m>"), "<s>", heap, time);
   }
 
   return <[], heap>;
 }
 
 
-tuple[Thread, Heap] running(Decl state, Thread me, Heap heap) {
+tuple[Thread, Heap] running(Decl state, Thread me, Heap heap, int time) {
   for ((Contents)`running {<Statement* js>}` <- contentsOf(state)) {
     heap = evalJS("{<js>}", heap).bindings;
   } 
   
   if ((Contents)`<Machine m>` <- contentsOf(state), hasChild(m, me)) {
-    <nested, heap> = fire(m, me[1..], heap);
+    <nested, heap> = fire(m, me[1..], heap, time);
     return <[me[0], *nested], heap>;
   } 
   
@@ -161,11 +173,11 @@ default list[Contents] contentsOf(Decl s) = [s.contents];
 Heap initVars(start[LRP] lrp) 
   = ( () | it +  ("<x>": evalJS("<e>", it).val) | /(Decl)`var <Id x> := <Expression e>;` := lrp ); 
 
-Timers initTimers(Machine m) 
-  = { <"<from>", "<to>", now()> |  (Decl)`on time <Expression _> <Id from> -\> <Id to>` <- m.decls };
+Timers initTimers(Machine m, int time) 
+  = { <"<from>", "<to>", time> |  (Decl)`on time <Expression _> <Id from> -\> <Id to>` <- m.decls };
 
-datetime lookupTimer(Timers ts, Id from, Id to) = dt
-  when <str f, str t, datetime dt> <- ts, "<from>" ==f, "<to>" == t;
+int lookupTimer(Timers ts, Id from, Id to) = dt
+  when <str f, str t, int dt> <- ts, "<from>" == f, "<to>" == t;
 
 Machine lookupMachine(start[LRP] lrp, str tid) = m
   when Machine m <- lrp.top.machines, "<m.name>" == tid;
